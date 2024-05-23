@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
-import "./Leaderboard.sol";
+// import "./Leaderboard.sol";
 
 contract RentManager {
-    //item struct
+    //item struct – the items that we are posting on the market
     struct Item {
         uint256 itemId;
         string itemName;
@@ -16,11 +16,18 @@ contract RentManager {
     // struct used to better organize an invoice
     struct Invoice {
         Item item;
-        // uint256 amount;          // total amount requested by the host
-        // uint256 remainingAmount; // remaining amount that the guest needs to pay; 0 means fully paid out
-        address buyer;            // the buyer that sends the invoice
-        // address guest;           
+        address buyer;            // the buyer that sends the invoice         
     }
+
+    // Struct representing a Leaderboard entry
+    struct lbEntry {
+        address user;
+        uint256 rank;
+        uint256 score;
+    }
+
+    // Array of triples representing the leaderboard
+    lbEntry[] public leaderboard;
 
     address private admin;        // address of admin
     uint256 private currItemId;
@@ -49,10 +56,8 @@ contract RentManager {
     // the item id can be used as index to access the 'items' array
     mapping(uint256 => Item) private id2item;
 
-    Leaderboard leaderboard;
-    constructor(Leaderboard lboard) {
+    constructor() {
         roles[msg.sender] = 1;
-        leaderboard = lboard;
         // create dummy invoice for default invoice to connect to
         currItemId = 0;
         Item memory defaultItem = Item({
@@ -109,14 +114,6 @@ contract RentManager {
             if (msg.sender != id2item[itemId].owner){
                 return false;
             }
-
-            int discount; // used for leaderboard only
-            if(itemPrice >= id2item[itemId].itemPrice) {
-                discount = int(id2item[itemId].itemPrice) - int(itemPrice);
-            } else {
-                discount += int(id2item[itemId].itemPrice) - int(itemPrice);
-            }
-
             Item memory item = Item({
                 itemId: itemId,
                 itemName: itemName,
@@ -125,6 +122,8 @@ contract RentManager {
                 owner: address(msg.sender),
                 forsale: forsale
             });
+            id2item[item.itemId] = item;
+            return true;
         }
         else {
             //currItemId starts at 0
@@ -142,17 +141,16 @@ contract RentManager {
             id2item[item.itemId] = item;
             return true;
         }
-        
-
-        
     }
 
     //view items that are being sold
-    function viewItems() public returns (Item[] memory) {
-        Item[] storage forsaleItems;
+    function viewItems() public view returns (Item[] memory) {
+        Item[] memory forsaleItems = new Item[](items.length);
+        uint256 count = 0;
         for(uint256 i = 0; i < items.length; i++) {
             if (items[i].forsale){
-                forsaleItems.push(items[i]);
+                forsaleItems[count] = items[i];
+                count++;
             }
         }
         return forsaleItems;
@@ -172,6 +170,7 @@ contract RentManager {
             return false;
         }
         
+        updateLeaderBoard(item, item.owner);
         //buyer
         balances[invoices[addr2invoice[msg.sender]].buyer] -= item.itemPrice;
         //seller
@@ -179,14 +178,130 @@ contract RentManager {
         // change the owner of the item
         item.owner = invoices[addr2invoice[msg.sender]].buyer;
         item.prevSoldPrice = item.itemPrice;
-        // when we want to update the leaderboard, do something here
+        return true;
     }
     
-    
-    //TODO
-    function viewLeaderBoard() public returns (string[] memory) {
+    function updateLeaderBoard(Item memory item, address owner) public returns (bool) {
+        // first, we need to check if the current user is already on the leaderboard
+        uint256 lbEntryPosition;
+        bool found = false;
+        for (uint i = 0; i < leaderboard.length; i++){
+            if (owner == leaderboard[i].user){
+                found = true;
+                lbEntryPosition = i;
+            }
+        }
+        // if current user is not in the leaderboard, then create a new leaderboard entry for the user - make a new score and update the ranks
+        uint discount;
+        if (item.prevSoldPrice > item.itemPrice){
+            discount = item.prevSoldPrice - item.itemPrice;
+        } else {
+            discount = 0;
+        }
         
+        // if there is no discount made, then we don't update the leaderboard at all
+        if (discount == 0){
+            return false;
+        }
+        
+        if (!found){
+            // create a new leaderboard entry if the user is not found on the leaderboard
+            lbEntry memory le = lbEntry({
+                user: owner,
+                rank: leaderboard.length + 1, // placeholder
+                score: discount
+            });
+            leaderboard.push(le);
+        }
+
+        // if the user is in the leaderboard, then update the score of the user and update the ranks
+        if (found) {
+            leaderboard[lbEntryPosition].score += discount;
+        }
+        sortLeaderBoard(0, leaderboard.length - 1);
+        return true;
     }
+    function sortLeaderBoard(uint left, uint right) public  {
+        if (left >= right) {
+            return;
+        }
+        uint p = leaderboard[(left + right) / 2].score;
+        uint i = left;
+        uint j = right;
+        while (i < j){
+            while (leaderboard[i].score < p){
+                i++;
+            }
+            while (leaderboard[j].score > p){
+                j--;
+            }
+            if (leaderboard[i].score > leaderboard[j].score){
+                lbEntry memory temp = leaderboard[i];
+                leaderboard[i] = leaderboard[j];
+                leaderboard[j] = temp;
+                // (leaderboard[i], leaderboard[j]) = (leaderboard[j], leaderboard[i]);
+            }
+            else {
+                i++;
+            }
+        }
+        if (j > left){
+            sortLeaderBoard(left, j - 1);
+        }
+        sortLeaderBoard(j + 1, right);
+    }
+    
+
+
+    //Returns the current leaderboard as an array of strings
+    function viewLeaderBoard() public view returns (string[] memory) {
+        string[] memory s = new string[](leaderboard.length);
+        for (uint256 i = 0; i < leaderboard.length; i++) {
+            s[i] = string.concat("User: ", toString(leaderboard[i].user), ", Rank: ", uint2str(leaderboard[i].rank), ", Score: ", uint2str(leaderboard[i].score));
+        }
+        return s;
+    }
+     
+    // below function from GeeksForGeeeks https://www.geeksforgeeks.org/type-conversion-in-solidity/
+    function toString(address _addr) internal pure returns (string memory) {
+        bytes32 value = bytes32(uint256(uint160(_addr)));
+        bytes memory alphabet = "0123456789abcdef";
+         
+        bytes memory str = new bytes(42);
+        str[0] = '0';
+        str[1] = 'x';
+         
+        for (uint256 i = 0; i < 20; i++) {
+            str[2 + i * 2] = alphabet[uint8(value[i + 12] >> 4)];
+            str[3 + i * 2] = alphabet[uint8(value[i + 12] & 0x0f)];
+        }
+         
+        return string(str);
+    }
+    
+    //below function from https://stackoverflow.com/questions/47129173/how-to-convert-uint-to-string-in-solidity
+    function uint2str(uint _i) internal pure returns (string memory _uintAsString) {
+        if (_i == 0) {
+            return "0";
+        }
+        uint j = _i;
+        uint len;
+        while (j != 0) {
+            len++;
+            j /= 10;
+        }
+        bytes memory bstr = new bytes(len);
+        uint k = len;
+        while (_i != 0) {
+            k = k-1;
+            uint8 temp = (48 + uint8(_i - _i / 10 * 10));
+            bytes1 b1 = bytes1(temp);
+            bstr[k] = b1;
+            _i /= 10;
+        }
+        return string(bstr);
+    }
+
 
     // Check the balance of the caller 
     // Rets:
