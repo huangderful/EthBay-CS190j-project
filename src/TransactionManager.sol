@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 // import "./Leaderboard.sol";
 
-contract RentManager {
+contract TransactionManager {
     //item struct – the items that we are posting on the market
     struct Item {
         uint256 itemId;
@@ -26,6 +26,11 @@ contract RentManager {
         uint256 score;
     }
 
+    struct bidder {
+        address user;
+        uint256 amount;
+    }
+
     // Array of triples representing the leaderboard
     lbEntry[] public leaderboard;
 
@@ -40,6 +45,9 @@ contract RentManager {
 
     // maps an address to its balance
     mapping(address => uint256) private balances;
+
+    // maps a item id to its bidders
+    mapping(uint256 => bidder[]) private bidders;
 
     // array of all invoices
     Invoice[] private invoices;
@@ -93,26 +101,17 @@ contract RentManager {
             return false;
         }
     }
-    // Add item to the items POSTING
-    // function addItem(Item calldata item) public returns (bool) {
-    //     if(roles[msg.sender] == 1 || roles[msg.sender] == 2){
-            
-    //         return true;
-    //     } else {
-    //         return false;
-    //     }
-    // }
     
     //add or edit item
-    function postItem(uint256 itemId, string calldata itemName, uint256 itemPrice, bool forsale) public returns (bool) {
-        if(roles[msg.sender] != 1 || roles[msg.sender] != 2){
-            return false;
+    function postItem(uint256 itemId, string calldata itemName, uint256 itemPrice, bool forsale) public returns (uint256) {
+        if(roles[msg.sender] != 2){
+            return 0;
         }
         // check if the item exists yet or not
         if (itemId != 0) {
             // check if the owner of the item is the same as the one posting it
             if (msg.sender != id2item[itemId].owner){
-                return false;
+                return 0;
             }
             Item memory item = Item({
                 itemId: itemId,
@@ -123,7 +122,7 @@ contract RentManager {
                 forsale: forsale
             });
             id2item[item.itemId] = item;
-            return true;
+            return itemId;
         }
         else {
             //currItemId starts at 0
@@ -139,7 +138,7 @@ contract RentManager {
             });
             items.push(item);
             id2item[item.itemId] = item;
-            return true;
+            return item.itemId; 
         }
     }
 
@@ -156,32 +155,85 @@ contract RentManager {
         return forsaleItems;
     }
 
-    //buy an item
-    function purchaseItem(uint256 itemId) public returns (bool) {
-        if (roles[msg.sender] != 1 || roles[msg.sender] != 2){
+    // view a specific item that is being sold
+    function viewItem(uint256 itemId) public view returns (Item memory) {
+        return id2item[itemId];
+    }
+    
+    // place a bid on an item
+    function purchaseItem(uint256 itemId, uint256 amount) public returns (bool) {
+        if (roles[msg.sender] != 2){
             return false;
         }
-        
+        if(itemId > items.length || itemId <= 0) {
+            return false;
+        }
         Item memory item = id2item[itemId];
         if (!item.forsale){
             return false;
         }
-        if(item.itemPrice > balances[msg.sender]) {
+        if(amount > balances[msg.sender]) {
+            return false;
+        } 
+        if(amount < item.itemPrice){
             return false;
         }
+        bidder memory bidGuy = bidder({
+            user: msg.sender, 
+            amount: amount
+        });
         
+        bidders[itemId].push(bidGuy);
+        return true;
+    }
+
+    // function called by the owner of an item to confirm the sale of that item – item is sold to the highest bidder in a block
+    function sellItem(uint256 itemId) public returns (bool) {
+        // check if the item exists
+        if (itemId == 0){
+            return false;
+        }
+        // check if the owner of the item is the same person who is attempting to sell it
+        if (msg.sender != id2item[itemId].owner){
+            return false;
+        }
+
+        // check if the item can be sold yet – i.e. the timestamp is valid
+        if (bidders[itemId].length < 3) {
+            return false;
+        }
+
+        uint256 currAmount = 0;
+        bidder memory highestBidder;
+        for(uint i = 0; i < bidders[itemId].length; i++) {
+            if (bidders[itemId][i].amount > currAmount) {
+                highestBidder = bidders[itemId][i];
+                currAmount = bidders[itemId][i].amount;
+            }
+        }
+        
+        Item memory item = id2item[itemId];
+
+        //do all this in end bidding
         updateLeaderBoard(item, item.owner);
         //buyer
-        balances[invoices[addr2invoice[msg.sender]].buyer] -= item.itemPrice;
+        // balances[invoices[addr2invoice[msg.sender]].buyer] -= item.itemPrice;
+        balances[highestBidder.user] -= highestBidder.amount;
         //seller
-        balances[invoices[addr2invoice[msg.sender]].item.owner] += item.itemPrice;
+        balances[msg.sender] += highestBidder.amount;
         // change the owner of the item
-        item.owner = invoices[addr2invoice[msg.sender]].buyer;
-        item.prevSoldPrice = item.itemPrice;
+        item.owner = highestBidder.user;
+        item.prevSoldPrice = highestBidder.amount;
+        item.forsale = false;
+        id2item[itemId] = item;
+        while (bidders[itemId].length > 0) {
+            bidders[itemId].pop();
+        }
+        
         return true;
     }
     
-    function updateLeaderBoard(Item memory item, address owner) public returns (bool) {
+    function updateLeaderBoard(Item memory item, address owner) private returns (bool) {
         // first, we need to check if the current user is already on the leaderboard
         uint256 lbEntryPosition;
         bool found = false;
@@ -200,7 +252,7 @@ contract RentManager {
         }
         
         // if there is no discount made, then we don't update the leaderboard at all
-        if (discount == 0){
+        if (discount == 0) {
             return false;
         }
         
@@ -221,7 +273,8 @@ contract RentManager {
         sortLeaderBoard(0, leaderboard.length - 1);
         return true;
     }
-    function sortLeaderBoard(uint left, uint right) public  {
+    
+    function sortLeaderBoard(uint left, uint right) private  {
         if (left >= right) {
             return;
         }
@@ -229,17 +282,16 @@ contract RentManager {
         uint i = left;
         uint j = right;
         while (i < j){
-            while (leaderboard[i].score < p){
+            while (leaderboard[i].score > p){
                 i++;
             }
-            while (leaderboard[j].score > p){
+            while (leaderboard[j].score < p){
                 j--;
             }
-            if (leaderboard[i].score > leaderboard[j].score){
+            if (leaderboard[i].score < leaderboard[j].score){
                 lbEntry memory temp = leaderboard[i];
                 leaderboard[i] = leaderboard[j];
                 leaderboard[j] = temp;
-                // (leaderboard[i], leaderboard[j]) = (leaderboard[j], leaderboard[i]);
             }
             else {
                 i++;
@@ -257,13 +309,13 @@ contract RentManager {
     function viewLeaderBoard() public view returns (string[] memory) {
         string[] memory s = new string[](leaderboard.length);
         for (uint256 i = 0; i < leaderboard.length; i++) {
-            s[i] = string.concat("User: ", toString(leaderboard[i].user), ", Rank: ", uint2str(leaderboard[i].rank), ", Score: ", uint2str(leaderboard[i].score));
+            s[i] = string.concat("User: ", toString(leaderboard[i].user), ", Rank: ", uint2str(i + 1), ", Score: ", uint2str(leaderboard[i].score));
         }
         return s;
     }
      
     // below function from GeeksForGeeeks https://www.geeksforgeeks.org/type-conversion-in-solidity/
-    function toString(address _addr) internal pure returns (string memory) {
+    function toString(address _addr) public pure returns (string memory) {
         bytes32 value = bytes32(uint256(uint160(_addr)));
         bytes memory alphabet = "0123456789abcdef";
          
@@ -280,7 +332,7 @@ contract RentManager {
     }
     
     //below function from https://stackoverflow.com/questions/47129173/how-to-convert-uint-to-string-in-solidity
-    function uint2str(uint _i) internal pure returns (string memory _uintAsString) {
+    function uint2str(uint _i) public pure returns (string memory _uintAsString) {
         if (_i == 0) {
             return "0";
         }
@@ -331,7 +383,7 @@ contract RentManager {
     // Specs:
     //   - only unregistered users can register; otherwise, return false
     //   - a user can only register once; otherwise, return false
-    function registerHost() public returns (bool) {
+    function registerUser() public returns (bool) {
         // ============================
         // add your implementation here
         // ============================
@@ -340,6 +392,20 @@ contract RentManager {
             roles[msg.sender] = 2;
             return true;
 
+        }
+        return false;
+    }
+
+    // the admin distributes the rewards
+    function distributeRewards(uint256 reward) public returns (bool) {
+        if (roles[msg.sender] == 1) {
+            if (reward > balances[msg.sender]) {
+                return false;
+            } else {
+                balances[msg.sender] -= reward;
+                balances[leaderboard[0].user] += reward;
+                return true;
+            }
         }
         return false;
     }
