@@ -12,6 +12,9 @@ contract TransactionManagerTest is Test {
     // ==== local roles ==== //
     // ===================== //
 
+    // these are roles of potential users
+    // buyers and sellers are labaled based on their initial transasction – posting an item or buying an item
+    // however, a buyer can sell an item, and a seller can buy an item
     address public admin = address(0x01);
     address public buyer1 = address(0x02);
     address public seller1 = address(0x03);
@@ -21,10 +24,15 @@ contract TransactionManagerTest is Test {
 
     address public buyer3 = address(0x06);
 
+    // initializes the balances of the users
+    // the buyers are initialized with a balance of 75 ether
+    // the sellers are initialiezed with a balance of 25 ether
+    // the reward that is distributed to the top 
     uint256 public init_buyer1_balance = 75 ether;
     uint256 public init_seller1_balance = 25 ether;
     uint256 public init_reward = 1 ether;
 
+    // sets up a transaction manager marketplace – the admin initializes the transactionManager and the reward is given to the admin
     function setUp() public {
         vm.startPrank(admin);
         tmgr = new TransactionManager();
@@ -32,6 +40,7 @@ contract TransactionManagerTest is Test {
         vm.stopPrank();
     }
 
+    // sets up and registers the local users we defined above
     function setup_accounts() public {
         vm.startPrank(buyer1);
         tmgr.registerUser();
@@ -46,6 +55,8 @@ contract TransactionManagerTest is Test {
         vm.stopPrank();
     }
 
+    // sets up and registers the users we defined above
+    // additionally, initializes the user balances
     function setup_accounts_with_balances() public {
         vm.startPrank(buyer1);
         tmgr.registerUser();
@@ -78,6 +89,8 @@ contract TransactionManagerTest is Test {
     // ========================== //
 
     // Feature: User Registration
+    // we register buyer1 as a user
+    // we check if the registration returns true, and if buyer1's role is 2 (user)
     function test_user_registration() public {
         vm.startPrank(buyer1);
         assertEq(tmgr.registerUser(), true);
@@ -86,6 +99,8 @@ contract TransactionManagerTest is Test {
     }
 
     // Feature: registered users can view their balance
+    // In this test case, we deposit 100 into buyer1's balance
+    // then, we check that when we view buyer1's balance, it returns 100
     function test_user_balance() public {
         setup_accounts();
         vm.startPrank(buyer1);
@@ -99,7 +114,7 @@ contract TransactionManagerTest is Test {
     function test_user_post_item() public{
         setup_accounts();
         vm.startPrank(seller1);
-        //if itemid is 0 it will generate a new one
+        //if itemid is 0 it will generate a new itemid
         // post 2 new items, and check if the item is posted properly (i.e. they get an incremented item id)
         assertEq(tmgr.postItem(0, "Tomato", 1 ether, true), 1);
         assertEq(tmgr.postItem(0, "Potato", 1 ether, true), 2);
@@ -107,7 +122,9 @@ contract TransactionManagerTest is Test {
         // these lines check each item, and
         uint256 rottenId = tmgr.postItem(0, "Rotten Tomato", 1 ether, false);
         assertEq(rottenId, 3); 
-        //see if they contain the correct metadata
+        // see if they contain the correct metadata:
+        // the price of the rottentomato should be 1 ether
+        // the item should not be for sale
         assertEq(tmgr.viewItem(rottenId).forsale, false);
         assertEq(tmgr.viewItem(rottenId).itemPrice, 1 ether);
 
@@ -117,14 +134,18 @@ contract TransactionManagerTest is Test {
     // Feature: A registered user can edit an item they have previously posted for sale
     function test_user_edit_item() public {
         setup_accounts();
+        // the seller will post 2 items for sale: Tomato and Potato
+        // the itemId of tomato and potato should be 1 and 2 respectively, which is returned
         vm.startPrank(seller1);
         assertEq(tmgr.postItem(0, "Tomato", 1 ether, true), 1);
         assertEq(tmgr.postItem(0, "Potato", 1 ether, true), 2);
 
+        // create another item, "Rotten Tomato", which should have itemId 3
         uint256 rottenId = tmgr.postItem(0, "Rotten Tomato", 1 ether, false);
         assertEq(rottenId, 3);
         
-        //these lines change the item and see if the id remains the same while updating 
+        // these lines changes the name of the item
+        // below, we check if all the metadata of the item that we updated was changed correctly
         rottenId = tmgr.postItem(rottenId, "Good Tomato", 2 ether, true);
         assertEq(rottenId, 3);
 
@@ -176,7 +197,7 @@ contract TransactionManagerTest is Test {
         assertEq(tmgr.viewItems()[3].owner, seller2);
         assertEq(tmgr.viewItems()[3].forsale, true);
 
-        // the last item posted should appear a, a default item as it is not for sale and its values should be hidden from viewitems
+        // the last item posted should appear as a default item in the array as it is not for sale and its values should be hidden from viewitems
         assertNotEq(tmgr.viewItems()[4].itemName, "Alcohol");  
         assertNotEq(tmgr.viewItems()[4].itemPrice, 5 ether);
         assertNotEq(tmgr.viewItems()[4].prevSoldPrice, 1);
@@ -534,7 +555,7 @@ contract TransactionManagerTest is Test {
         assertEq(tmgr.viewBalance(), 65 ether);
         vm.stopPrank();
     }
-    
     // potential penetration test cases:
+    
 
 }

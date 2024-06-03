@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 // import "./Leaderboard.sol";
+import "./ReentrancyGuard.sol";
 
-contract TransactionManager {
+contract TransactionManager is ReentrancyGuard {
     //item struct – the items that we are posting on the market
     struct Item {
         uint256 itemId;
@@ -11,12 +12,6 @@ contract TransactionManager {
         uint256 prevSoldPrice;
         address owner;
         bool forsale;
-    }
-
-    // struct used to better organize an invoice
-    struct Invoice {
-        Item item;
-        address buyer;            // the buyer that sends the invoice         
     }
 
     // Struct representing a Leaderboard entry
@@ -49,16 +44,8 @@ contract TransactionManager {
     // maps a item id to its bidders
     mapping(uint256 => bidder[]) private bidders;
 
-    // array of all invoices
-    Invoice[] private invoices;
-
     // array of all items
     Item[] private items;
-
-    
-    // maps an address to its existing invoice id
-    // the invoice id can be used as index to access the `invoices` array
-    mapping(address => uint256) private addr2invoice;
 
     // maps an address to its item
     // the item id can be used as index to access the 'items' array
@@ -66,7 +53,7 @@ contract TransactionManager {
 
     constructor() {
         roles[msg.sender] = 1;
-        // create dummy invoice for default invoice to connect to
+        // create dummy item for default item to connect to
         currItemId = 0;
         Item memory defaultItem = Item({
             itemId: 0,
@@ -76,13 +63,7 @@ contract TransactionManager {
             owner: address(0),
             forsale: false
         });
-        Invoice memory invoice = Invoice({
-            item: defaultItem,
-            buyer: address(0)
-            //amount: 0
-            //remainingAmount: 0,
-        });
-        invoices.push(invoice);
+        items.push(defaultItem);
     }
 
     // Add balance to the caller's account
@@ -103,7 +84,7 @@ contract TransactionManager {
     }
     
     //add or edit item
-    function postItem(uint256 itemId, string calldata itemName, uint256 itemPrice, bool forsale) public returns (uint256) {
+    function postItem(uint256 itemId, string calldata itemName, uint256 itemPrice, bool forsale) nonReentrant public returns (uint256) {
         if(roles[msg.sender] != 2){
             return 0;
         }
@@ -188,7 +169,7 @@ contract TransactionManager {
     }
 
     // function called by the owner of an item to confirm the sale of that item – item is sold to the highest bidder in a block
-    function sellItem(uint256 itemId) public returns (bool) {
+    function sellItem(uint256 itemId) nonReentrant public returns (bool) {
         // check if the item exists
         if (itemId == 0){
             return false;
@@ -217,7 +198,6 @@ contract TransactionManager {
         //do all this in end bidding
         updateLeaderBoard(item, item.owner);
         //buyer
-        // balances[invoices[addr2invoice[msg.sender]].buyer] -= item.itemPrice;
         balances[highestBidder.user] -= highestBidder.amount;
         //seller
         balances[msg.sender] += highestBidder.amount;
@@ -395,19 +375,32 @@ contract TransactionManager {
         }
         return false;
     }
-
     // the admin distributes the rewards
     function distributeRewards(uint256 reward) public returns (bool) {
+        // if the leaderboard is empty, then it is not valid to distribute rewards
+        if (leaderboard.length == 0){
+            return false;
+        }
         if (roles[msg.sender] == 1) {
             if (reward > balances[msg.sender]) {
                 return false;
             } else {
+                // if the user at the top of the leaderboard no longer exists (i.e. has self destructed), we should return false
+                
                 balances[msg.sender] -= reward;
                 balances[leaderboard[0].user] += reward;
                 return true;
             }
         }
         return false;
+    }
+
+    receive() external payable {
+        // Revert on unexpected Ether transfers
+        revert("Direct Ether transfer not allowed");
+    }
+    fallback() external payable {
+        revert("Direct Ether transfer not allowed");
     }
 
 }
